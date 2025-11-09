@@ -6,12 +6,12 @@ output "region" {
   value = var.region
 }
 
-output "ecr_repository_url" {
-  value = aws_ecr_repository.giga_caddy.repository_url
-  description = "ECR repository for Caddy image"
-}
+#output "ecr_repository_url" {
+#  value = aws_ecr_repository.giga_caddy.repository_url
+#  description = "ECR repository for Caddy image"
+#}
 
-output "kubeconfig" {
-  value = module.eks.kubeconfig
-  sensitive = true
-}
+#output "kubeconfig" {
+#  value = module.eks.kubeconfig
+#  sensitive = true
+#}

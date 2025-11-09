@@ -42,7 +42,7 @@ resource "kubernetes_deployment" "caddy" {
         container {
           name  = "caddy"
           image = "docker.io/khurshidumid/giga-caddy:latest"
-          ports {
+          port {
             container_port = 80
           }
 
