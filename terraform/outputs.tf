@@ -3,8 +3,14 @@ output "cluster_name" {
 }
 
 output "region" {
-  value = var.region
+  value       = var.aws_region
+  description = "AWS region of the cluster"
 }
+
+
+#output "region" {
+#  value = var.region
+#}
 
 #output "ecr_repository_url" {
 #  value = aws_ecr_repository.giga_caddy.repository_url
