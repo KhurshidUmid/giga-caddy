@@ -1,0 +1,391 @@
+# terraform/kubernetes_addons.tf
+
+# Nginx Ingress Controller
+resource "helm_release" "nginx_ingress" {
+  name             = "nginx-ingress"
+  repository       = "https://kubernetes.github.io/ingress-nginx"
+  chart            = "ingress-nginx"
+  namespace        = "ingress-nginx"
+  version          = "4.9.0"
+  create_namespace = true
+
+  values = [
+    yamlencode({
+      controller = {
+        service = {
+          type = "LoadBalancer"
+          annotations = {
+            "service.beta.kubernetes.io/aws-load-balancer-type"            = "nlb"
+            "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled" = "true"
+          }
+        }
+        metrics = {
+          enabled = true
+          serviceMonitor = {
+            enabled = var.prometheus_enabled
+          }
+        }
+        resources = {
+          limits = {
+            cpu    = "200m"
+            memory = "256Mi"
+          }
+          requests = {
+            cpu    = "100m"
+            memory = "128Mi"
+          }
+        }
+      }
+    })
+  ]
+
+  depends_on = [aws_eks_node_group.main]
+}
+
+# Cert-Manager
+resource "helm_release" "cert_manager" {
+  name             = "cert-manager"
+  repository       = "https://charts.jetstack.io"
+  chart            = "cert-manager"
+  namespace        = "cert-manager"
+  version          = "v1.13.3"
+  create_namespace = true
+
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
+
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.cert_manager.arn
+  }
+
+  depends_on = [aws_eks_node_group.main]
+}
+
+# Wait for cluster to be ready before creating manifests
+resource "null_resource" "wait_for_cluster" {
+  provisioner "local-exec" {
+    command = "aws eks wait cluster-active --name ${aws_eks_cluster.main.name} --region ${var.aws_region}"
+  }
+
+  depends_on = [aws_eks_node_group.main]
+}
+
+# Cert-Manager Cluster Issuer for Let's Encrypt Production
+#resource "kubernetes_manifest" "letsencrypt_prod" {
+#  manifest = {
+#    apiVersion = "cert-manager.io/v1"
+#    kind       = "ClusterIssuer"
+#    metadata = {
+#      name      = "letsencrypt-prod"
+#      namespace = "cert-manager"
+#    }
+#    spec = {
+#      acme = {
+#        server = "https://acme-v02.api.letsencrypt.org/directory"
+#        email  = var.letsencrypt_email
+#        privateKeySecretRef = {
+#          name = "letsencrypt-prod"
+#        }
+#        solvers = [
+#          {
+#            dns01 = {
+#              route53 = {
+#                region = var.aws_region
+#              }
+#            }
+#          }
+#        ]
+#      }
+#    }
+#  }
+
+#  depends_on = [
+#    helm_release.cert_manager,
+#    null_resource.wait_for_cluster
+#  ]
+#}
+
+# Cert-Manager Cluster Issuer for Let's Encrypt Staging
+#resource "kubernetes_manifest" "letsencrypt_staging" {
+#  manifest = {
+#    apiVersion = "cert-manager.io/v1"
+#    kind       = "ClusterIssuer"
+#    metadata = {
+#      name      = "letsencrypt-staging"
+#      namespace = "cert-manager"
+#    }
+#    spec = {
+#      acme = {
+#        server = "https://acme-staging-v02.api.letsencrypt.org/directory"
+#        email  = var.letsencrypt_email
+#        privateKeySecretRef = {
+#          name = "letsencrypt-staging"
+#        }
+#        solvers = [
+#          {
+#            dns01 = {
+#              route53 = {
+#                region = var.aws_region
+#              }
+#            }
+#          }
+#        ]
+#      }
+#    }
+#  }
+
+#  depends_on = [
+#    helm_release.cert_manager,
+#    null_resource.wait_for_cluster
+#  ]
+#}
+
+# External DNS
+resource "helm_release" "external_dns" {
+  name             = "external-dns"
+  repository       = "https://kubernetes-sigs.github.io/external-dns/"
+  chart            = "external-dns"
+  namespace        = "external-dns"
+  version          = "1.14.0"
+  create_namespace = true
+
+  values = [
+    yamlencode({
+      provider = "aws"
+      policy   = "sync"
+      registry = "txt"
+      txtOwnerId = var.cluster_name
+      aws = {
+        region = var.aws_region
+      }
+      serviceAccount = {
+        annotations = {
+          "eks.amazonaws.com/role-arn" = aws_iam_role.external_dns.arn
+        }
+      }
+      resources = {
+        limits = {
+          cpu    = "100m"
+          memory = "128Mi"
+        }
+        requests = {
+          cpu    = "50m"
+          memory = "64Mi"
+        }
+      }
+      metrics = {
+        enabled = var.prometheus_enabled
+      }
+    })
+  ]
+
+  depends_on = [aws_eks_node_group.main]
+}
+
+# Cluster Autoscaler
+resource "helm_release" "cluster_autoscaler" {
+  name             = "cluster-autoscaler"
+  repository       = "https://kubernetes.github.io/autoscaler"
+  chart            = "cluster-autoscaler"
+  namespace        = "kube-system"
+  version          = "9.29.3"
+
+  values = [
+    yamlencode({
+      autoDiscovery = {
+        clusterName = var.cluster_name
+        enabled     = true
+      }
+      awsRegion = var.aws_region
+      rbac = {
+        serviceAccount = {
+          annotations = {
+            "eks.amazonaws.com/role-arn" = aws_iam_role.cluster_autoscaler.arn
+          }
+        }
+      }
+      resources = {
+        limits = {
+          cpu    = "100m"
+          memory = "300Mi"
+        }
+        requests = {
+          cpu    = "50m"
+          memory = "150Mi"
+        }
+      }
+      extraArgs = {
+        skip-nodes-with-local-storage        = false
+        balance-similar-node-groups          = true
+        expander                             = "priority"
+        scale-down-enabled                   = true
+        scale-down-delay-after-add           = "10m"
+        scale-down-unneeded-time             = "10m"
+        scale-down-utilization-threshold     = "0.5"
+      }
+    })
+  ]
+
+  depends_on = [aws_eks_node_group.main]
+}
+
+# CloudWatch Container Insights
+resource "kubernetes_namespace" "amazon_cloudwatch" {
+  metadata {
+    name = "amazon-cloudwatch"
+  }
+
+  depends_on = [null_resource.wait_for_cluster]
+}
+
+resource "helm_release" "cloudwatch_container_insights" {
+  name            = "aws-cloudwatch-metrics"
+  repository      = "https://aws.github.io/eks-charts"
+  chart           = "aws-cloudwatch-metrics"
+  namespace       = kubernetes_namespace.amazon_cloudwatch.metadata[0].name
+  version         = "0.0.9"
+
+  values = [
+    yamlencode({
+      clusterName = var.cluster_name
+      resources = {
+        limits = {
+          cpu    = "200m"
+          memory = "200Mi"
+        }
+        requests = {
+          cpu    = "100m"
+          memory = "100Mi"
+        }
+      }
+    })
+  ]
+
+  depends_on = [aws_eks_node_group.main]
+}
+
+# Prometheus (Optional - for advanced monitoring)
+resource "helm_release" "prometheus" {
+  count            = var.prometheus_enabled ? 1 : 0
+  name             = "prometheus"
+  repository       = "https://prometheus-community.github.io/helm-charts"
+  chart            = "kube-prometheus-stack"
+  namespace        = "prometheus"
+  version          = "55.0.0"
+  create_namespace = true
+
+  values = [
+    yamlencode({
+      prometheus = {
+        prometheusSpec = {
+          retention = "7d"
+          resources = {
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
+            requests = {
+              cpu    = "250m"
+              memory = "256Mi"
+            }
+          }
+          storageSpec = {
+            volumeClaimTemplate = {
+              spec = {
+                storageClassName = "gp3"
+                accessModes      = ["ReadWriteOnce"]
+                resources = {
+                  requests = {
+                    storage = "10Gi"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      grafana = {
+        adminPassword = random_password.grafana_password.result
+        resources = {
+          limits = {
+            cpu    = "200m"
+            memory = "256Mi"
+          }
+          requests = {
+            cpu    = "100m"
+            memory = "128Mi"
+          }
+        }
+      }
+    })
+  ]
+
+  depends_on = [aws_eks_node_group.main]
+}
+
+# Generate random password for Grafana
+resource "random_password" "grafana_password" {
+  length  = 16
+  special = true
+}
+
+# StorageClass for EBS volumes
+resource "kubernetes_storage_class" "ebs" {
+  metadata {
+    name = "ebs-sc"
+  }
+  storage_provisioner = "ebs.csi.aws.com"
+  parameters = {
+    type      = "gp3"
+    encrypted = "true"
+  }
+  reclaim_policy      = "Delete"
+  volume_binding_mode = "WaitForFirstConsumer"
+
+  depends_on = [null_resource.wait_for_cluster]
+}
+
+resource "kubernetes_storage_class" "ebs_default" {
+  metadata {
+    name = "gp3"
+    annotations = {
+      "storageclass.kubernetes.io/is-default-class" = "true"
+    }
+  }
+  storage_provisioner = "ebs.csi.aws.com"
+  parameters = {
+    type      = "gp3"
+    encrypted = "true"
+  }
+  reclaim_policy      = "Delete"
+  volume_binding_mode = "WaitForFirstConsumer"
+
+  depends_on = [null_resource.wait_for_cluster]
+}
+
+# Network Policy for security
+resource "kubernetes_network_policy" "default_deny" {
+  metadata {
+    name      = "default-deny-all"
+    namespace = "default"
+  }
+
+  spec {
+    pod_selector {}
+    policy_types = ["Ingress", "Egress"]
+  }
+
+  depends_on = [null_resource.wait_for_cluster]
+}
+
+# Pod Disruption Budget for Caddy
+
+# Outputs
+output "grafana_password" {
+  description = "Grafana admin password"
+  value       = random_password.grafana_password.result
+  sensitive   = true
+}

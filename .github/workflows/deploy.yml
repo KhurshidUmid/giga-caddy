@@ -1,0 +1,43 @@
+name: Deploy Caddy to EKS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::745035359834:role/github-actions-terraform-role
+          aws-region: us-east-1
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init
+
+      - name: Terraform Plan
+        run: terraform -chdir=terraform plan -var-file=environments/dev.tfvars -out=tfplan
+
+      - name: Manual approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ secrets.GITHUB_TOKEN }}
+          approvers: khurshidumid
+          minimum-approvals: 1
+
+      - name: Terraform Apply
+        if: ${{ steps.manual-approval.outputs.approved == 'true' }}
+        run: terraform -chdir=terraform apply -auto-approve tfplan

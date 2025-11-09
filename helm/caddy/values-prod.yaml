@@ -1,0 +1,75 @@
+# helm/caddy/values-prod.yaml
+replicaCount: 3
+
+image:
+  tag: "2.8.0"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 250m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 70
+
+ingress:
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/rate-limit: "50"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.3"
+  hosts:
+    - host: "env.giga-caddy.click"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: caddy-tls-prod
+      hosts:
+        - "env.giga-caddy.click"
+
+caddyConfig:
+  content: |
+    {
+      order authenticate before respond
+      log {
+        level error
+      }
+    }
+    
+    env.giga-caddy.click {
+      encode gzip
+      
+      @blocked {
+        path /admin*
+        path /private*
+      }
+      respond @blocked 403
+      
+      respond / "Production Environment - Caddy Web Server"
+      
+      file_server {
+        root /var/www/html
+        index index.html
+      }
+    }
+
+nodeSelector:
+  workload: web
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - caddy
+        topologyKey: kubernetes.io/hostname

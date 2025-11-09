@@ -1,0 +1,156 @@
+# .github/workflows/helm-deploy.yaml
+name: Deploy Caddy with Helm
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'helm/caddy/**'
+      - '.github/workflows/helm-deploy.yaml'
+  pull_request:
+    paths:
+      - 'helm/caddy/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  AWS_REGION: us-east-1
+  HELM_VERSION: 3.13.0
+
+jobs:
+  lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Helm Lint
+        run: helm lint helm/caddy/ -f helm/caddy/values.yaml
+
+      - name: Helm Lint Dev
+        run: helm lint helm/caddy/ -f helm/caddy/values.yaml -f helm/caddy/values-dev.yaml
+
+      - name: Helm Lint Staging
+        run: helm lint helm/caddy/ -f helm/caddy/values.yaml -f helm/caddy/values-staging.yaml
+
+      - name: Helm Lint Prod
+        run: helm lint helm/caddy/ -f helm/caddy/values.yaml -f helm/caddy/values-prod.yaml
+
+  template:
+    name: Helm Template Validation
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      matrix:
+        environment: [dev, staging, prod]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Template Helm Chart
+        run: |
+          helm template caddy helm/caddy/ \
+            -f helm/caddy/values.yaml \
+            -f helm/caddy/values-${{ matrix.environment }}.yaml \
+            > manifests-${{ matrix.environment }}.yaml
+
+      - name: Validate Kubernetes Manifests
+        uses: instrumenta/kubeval-action@master
+        with:
+          files: manifests-${{ matrix.environment }}.yaml
+          strict: true
+
+      - name: Policy Validation with Kyverno
+        uses: nirmata/kyverno-action@master
+        with:
+          policies: 'policies/kyverno'
+          resource: manifests-${{ matrix.environment }}.yaml
+
+      - name: Upload Manifests
+        uses: actions/upload-artifact@v3
+        with:
+          name: helm-manifests-${{ matrix.environment }}
+          path: manifests-${{ matrix.environment }}.yaml
+
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, template]
+    strategy:
+      matrix:
+        environment: [dev]
+      max-parallel: 1
+    environment:
+      name: ${{ matrix.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name giga-caddy-${{ matrix.environment }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Add Helm Repositories
+        run: |
+          helm repo add stable https://charts.helm.sh/stable
+          helm repo update
+
+      - name: Create Namespace
+        run: |
+          kubectl create namespace caddy-${{ matrix.environment }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Helm Upgrade/Install
+        run: |
+          helm upgrade --install caddy helm/caddy/ \
+            --namespace caddy-${{ matrix.environment }} \
+            --values helm/caddy/values.yaml \
+            --values helm/caddy/values-${{ matrix.environment }}.yaml \
+            --timeout 5m \
+            --wait \
+            --atomic
+
+      - name: Verify Deployment
+        run: |
+          kubectl rollout status deployment/caddy \
+            -n caddy-${{ matrix.environment }} \
+            --timeout=300s
+
+      - name: Post-Deploy Tests
+        run: |
+          kubectl run curl-test \
+            --image=curlimages/curl \
+            --restart=Never \
+            -n caddy-${{ matrix.environment }} \
+            -- curl -f http://caddy/health || true

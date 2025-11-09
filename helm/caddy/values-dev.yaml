@@ -1,0 +1,58 @@
+# helm/caddy/values-dev.yaml
+replicaCount: 1
+
+image:
+  tag: "2.8.0"
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+ingress:
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+  hosts:
+    - host: "dev.giga-caddy.click"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: caddy-tls-dev
+      hosts:
+        - "dev.giga-caddy.click"
+
+caddyConfig:
+  content: |
+    {
+      order authenticate before respond
+      log {
+        level debug
+      }
+    }
+    
+    dev.giga-caddy.click {
+      encode gzip
+      
+      @blocked {
+        path /admin*
+        path /private*
+      }
+      respond @blocked 403
+      
+      respond / "Development Environment - Caddy Web Server"
+      
+      file_server {
+        root /var/www/html
+        index index.html
+      }
+    }

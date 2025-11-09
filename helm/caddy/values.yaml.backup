@@ -1,0 +1,153 @@
+# Caddy Helm Chart Values - Template for all environments
+# Location: helm/caddy/values-{environment}.yaml
+
+replicaCount: 2
+
+image:
+  repository: caddy
+  pullPolicy: IfNotPresent
+  tag: "2.8.0"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: "caddy"
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "2019"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 80
+  annotations: {}
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  hosts:
+    - host: "env.giga-caddy.click"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: caddy-tls
+      hosts:
+        - "env.giga-caddy.click"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - caddy
+          topologyKey: kubernetes.io/hostname
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 2019
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 2019
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 2
+
+volumeMounts:
+  - name: caddyfile
+    mountPath: /etc/caddy
+    readOnly: true
+  - name: caddy-data
+    mountPath: /data
+
+volumes:
+  - name: caddyfile
+    configMap:
+      name: caddy-config
+  - name: caddy-data
+    emptyDir: {}
+
+caddyConfig:
+  # Injected from ConfigMap
+  content: |
+    {
+      order authenticate before respond
+    }
+    
+    env.giga-caddy.click {
+      encode gzip
+      
+      @blocked {
+        path /admin*
+        path /private*
+      }
+      respond @blocked 403
+      
+      file_server {
+        root /var/www/html
+        index index.html
+      }
+    }
+
+# Monitoring
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+
+# Environment-specific overrides handled via Kustomize/Helm hooks

@@ -1,0 +1,60 @@
+# helm/caddy/values-staging.yaml
+replicaCount: 2
+
+image:
+  tag: "2.8.0"
+
+resources:
+  limits:
+    cpu: 300m
+    memory: 192Mi
+  requests:
+    cpu: 100m
+    memory: 96Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75
+  targetMemoryUtilizationPercentage: 75
+
+ingress:
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+  hosts:
+    - host: "staging.giga-caddy.click"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: caddy-tls-staging
+      hosts:
+        - "staging.giga-caddy.click"
+
+caddyConfig:
+  content: |
+    {
+      order authenticate before respond
+      log {
+        level warn
+      }
+    }
+    
+    staging.giga-caddy.click {
+      encode gzip
+      
+      @blocked {
+        path /admin*
+        path /private*
+      }
+      respond @blocked 403
+      
+      respond / "Staging Environment - Caddy Web Server"
+      
+      file_server {
+        root /var/www/html
+        index index.html
+      }
+    }

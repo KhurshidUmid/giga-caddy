@@ -1,0 +1,14 @@
+cluster_name                = "giga-caddy-prod"
+environment                 = "prod"
+kubernetes_version          = "1.31"
+aws_region                  = "us-east-1"
+vpc_cidr                    = "10.20.0.0/16"
+node_instance_types         = ["t3.large", "t3.xlarge"]
+node_group_desired_size     = 3
+node_group_min_size         = 3
+node_group_max_size         = 15
+node_disk_size              = 20
+log_retention_days          = 30
+prometheus_enabled          = true
+route53_zone_id             = "Z02933163FHRSYZ0J0Y2R"
+letsencrypt_email           = "ops@example.com"

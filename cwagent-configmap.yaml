@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-cloudwatch-metrics
+  namespace: amazon-cloudwatch
+  labels:
+    app.kubernetes.io/name: aws-cloudwatch-metrics
+data:
+  cwagentconfig.json: |
+    {
+      "agent": {
+        "region": "us-east-1",
+        "metrics_collection_interval": 60,
+        "run_as_user": "root"
+      },
+      "logs": {
+        "metrics_collected": {
+          "kubernetes": {
+            "cluster_name": "giga-caddy-dev",
+            "metrics_collection_interval": 60
+          }
+        },
+        "force_flush_interval": 5
+      }
+    }

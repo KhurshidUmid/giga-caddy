@@ -1,0 +1,74 @@
+# terraform/variables_addons.tf
+
+variable "prometheus_enabled" {
+  description = "Enable Prometheus and Grafana for monitoring"
+  type        = bool
+  default     = true
+}
+
+variable "letsencrypt_email" {
+  description = "Email for Let's Encrypt certificate notifications"
+  type        = string
+  sensitive   = true
+}
+
+variable "enable_environments" {
+  description = "Map of environments to enable"
+  type        = map(bool)
+  default = {
+    dev     = true
+    staging = true
+    prod    = false
+  }
+}
+
+# Environment configuration files location
+# terraform/environments/dev.tfvars
+cluster_name                = "giga-caddy-dev"
+environment                 = "dev"
+kubernetes_version          = "1.31"
+node_group_desired_size     = 2
+node_group_min_size         = 1
+node_group_max_size         = 5
+node_instance_types         = ["t3.medium"]
+log_retention_days          = 7
+prometheus_enabled          = true
+letsencrypt_email           = "devops@giga-caddy.local"
+vpc_cidr                    = "10.0.0.0/16"
+
+# terraform/environments/staging.tfvars
+cluster_name                = "giga-caddy-staging"
+environment                 = "staging"
+kubernetes_version          = "1.31"
+node_group_desired_size     = 2
+node_group_min_size         = 2
+node_group_max_size         = 8
+node_instance_types         = ["t3.large"]
+log_retention_days          = 14
+prometheus_enabled          = true
+letsencrypt_email           = "ops@giga-caddy.com"
+vpc_cidr                    = "10.10.0.0/16"
+
+# terraform/environments/prod.tfvars
+cluster_name                = "giga-caddy-prod"
+environment                 = "prod"
+kubernetes_version          = "1.31"
+node_group_desired_size     = 3
+node_group_min_size         = 3
+node_group_max_size         = 15
+node_instance_types         = ["t3.large", "t3.xlarge"]
+log_retention_days          = 30
+prometheus_enabled          = true
+letsencrypt_email           = "prod-ops@giga-caddy.com"
+vpc_cidr                    = "10.20.0.0/16"
+
+# Resource tagging strategy
+locals {
+  common_tags = {
+    Project              = "giga-caddy"
+    ManagedBy            = "Terraform"
+    CostCenter           = "Engineering"
+    BackupPolicy         = "Daily"
+    ComplianceScope      = "SOC2"
+  }
+}
